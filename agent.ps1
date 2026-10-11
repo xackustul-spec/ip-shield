@@ -67,7 +67,7 @@ function Get-Attempts([hashtable]$State, [datetime]$Since) {
         }
         $svc = switch ([string]$d['LogonType']) {
             '10'    { "RDP:$rdpPort" }
-            '3'     { 'Сеть/SMB:445' }
+            '3'     { 'Сеть (RDP с NLA или SMB)' }
             '8'     { 'Веб (Basic):80/443' }
             default { "Вход Windows (тип $($d['LogonType']))" }
         }
