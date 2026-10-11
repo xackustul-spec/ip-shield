@@ -150,6 +150,13 @@ function Set-BanRules([string[]]$Ips) {
 }
 
 # ---------------- основной проход ----------------
+$script:sw = [Diagnostics.Stopwatch]::StartNew()
+$script:verbose = $Force -or -not (Test-Path $IPS_StatePath)
+function Step([string]$Name) {
+    $msg = "этап: $Name ($([int]$script:sw.Elapsed.TotalSeconds) c)"
+    if ($script:verbose) { Write-IPSLog $msg; try { Write-Host $msg } catch {} }
+}
+
 $cfg = Get-IPSConfig
 if (-not $cfg) { Write-IPSLog 'Нет config.json — агент не настроен'; exit 1 }
 
@@ -162,6 +169,7 @@ $Att = $state.attackers
 $errors = New-Object System.Collections.ArrayList
 
 # 1. новые события
+Step 'чтение журналов'
 try {
     $since = if ($state.lastScan) { (ConvertFrom-Stamp $state.lastScan).AddMinutes(-30) } else { $now.AddDays(-[int]$cfg.windowDays) }
     $attempts = Get-Attempts $state $since
@@ -184,6 +192,7 @@ try {
 } catch { [void]$errors.Add("Журналы: $($_.Exception.Message)"); Write-IPSLog "Ошибка чтения журналов: $($_.Exception.Message)" }
 
 # чистим старьё
+Step 'очистка'
 $keepS = Get-Stamp $now.AddDays(-[int]$cfg.keepDays)
 $winS = Get-Stamp $now.AddDays(-[int]$cfg.windowDays)
 foreach ($ip in @($Att.Keys)) {
@@ -191,9 +200,11 @@ foreach ($ip in @($Att.Keys)) {
     $Att[$ip].r = @(@($Att[$ip].r) | Where-Object { $_ -ge $winS })
 }
 
+Step 'страны (GeoIP)'
 Update-Geo $Att
 
 # 2. общий список из GitHub
+Step 'GitHub: чтение'
 $shared = Read-JsonFile $IPS_SharedPath @{}
 if (-not ($shared['files'] -is [System.Collections.IDictionary])) { $shared['files'] = @{} }
 $tree = $null
@@ -220,6 +231,7 @@ $white = @($ctl.whitelist)
 $unban = $ctl.unban
 
 # 3. решаем, кого банить по местным событиям
+Step 'успешные входы и решение о бане'
 $trusted = Get-TrustedIPs ([int]$cfg.trustDays)
 $threshold = [int]$cfg.threshold
 foreach ($ip in @($Att.Keys)) {
@@ -231,6 +243,7 @@ foreach ($ip in @($Att.Keys)) {
 }
 
 # 4. отправляем свой файл в общий репозиторий
+Step 'GitHub: отправка'
 $me = $env:COMPUTERNAME
 $myPath = "hosts/$me.json"
 $lanIp = $null
@@ -262,6 +275,7 @@ if ($pushDue -and $cfg.token -and $tree) {
 }
 
 # 5. сводим всё вместе: свои данные + данные всех компов
+Step 'сведение данных'
 $rows = @{}
 $trustAll = @{}
 $hostsInfo = New-Object System.Collections.ArrayList
@@ -294,6 +308,7 @@ foreach ($path in $docs.Keys) {
 }
 
 # 6. итоговый список блокировок
+Step 'брандмауэр'
 $desired = New-Object System.Collections.ArrayList
 foreach ($ip in $rows.Keys) {
     $r = $rows[$ip]
@@ -316,6 +331,7 @@ if (($desiredSorted -join ',') -ne (@($state.applied) -join ',')) {
 }
 
 # 7. данные для окна мониторинга
+Step 'сохранение'
 $view = @{
     host = $me; version = $IPS_Version; generated = $nowS; lastScan = $state.lastScan; lastSync = $state.lastSync; lastPush = $state.lastPush
     firewall = $fwOn; bannedCount = $desiredSorted.Count; errors = @($errors); threshold = $threshold; windowDays = [int]$cfg.windowDays
@@ -325,4 +341,5 @@ try { Write-JsonFile $IPS_ViewPath $view } catch { Write-IPSLog "view.json: $($_
 $state.lastErrors = @($errors)
 Write-JsonFile $IPS_SharedPath $shared
 Write-JsonFile $IPS_StatePath $state
+Step 'готово'
 $mutex.ReleaseMutex()
