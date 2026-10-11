@@ -12,7 +12,9 @@
     $tok = ''
     $v = Get-Variable -Name IPShieldToken -Scope Global -ErrorAction SilentlyContinue
     if ($v -and $v.Value) { $tok = [string]$v.Value }
-    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $tmp -Token $tok
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tmp)
+    if ($tok) { $a += @('-Token', $tok) }
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" @a
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     Remove-Variable -Name IPShieldToken -Scope Global -ErrorAction SilentlyContinue
 }
