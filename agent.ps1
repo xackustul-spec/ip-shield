@@ -7,8 +7,10 @@ param([switch]$Force)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
-$mutex = New-Object System.Threading.Mutex($false, 'Global\IPShieldAgent')
-if (-not $mutex.WaitOne(0)) { exit 0 }
+# защита от двойного запуска: файл-замок (работает и для SYSTEM, и для администратора)
+try {
+    $lockFile = [IO.File]::Open((Join-Path $IPS_Root 'agent.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+} catch { exit 0 }
 
 # ---------------- сбор событий ----------------
 function Get-RdpPort {
@@ -342,4 +344,4 @@ $state.lastErrors = @($errors)
 Write-JsonFile $IPS_SharedPath $shared
 Write-JsonFile $IPS_StatePath $state
 Step 'готово'
-$mutex.ReleaseMutex()
+$lockFile.Dispose()
