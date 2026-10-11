@@ -10,6 +10,12 @@ $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
 
 function Say([string]$Text, [string]$Color = 'Gray') { Write-Host $Text -ForegroundColor $Color }
+# Запуск внешней программы: её сообщения об ошибках в stderr не должны прерывать установку
+function Invoke-Native([string]$Exe, [string[]]$Arguments) {
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $out = & $Exe @Arguments 2>&1 | Out-String; return @{ code = $LASTEXITCODE; out = $out } }
+    finally { $ErrorActionPreference = $old }
+}
 
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -25,7 +31,7 @@ $root = Join-Path $env:ProgramData 'IPShield'
 Say "== IP Shield: установка в $root" Cyan
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 # доступ к папке только у SYSTEM и администраторов — там лежит ключ GitHub
-& icacls.exe $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+[void](Invoke-Native 'icacls.exe' @($root, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'))
 
 # 1. файлы программы из публичного репозитория
 $base = "https://raw.githubusercontent.com/$Owner/$CodeRepo/$Branch"
@@ -63,11 +69,11 @@ try {
 }
 
 # 4. убрать старый одиночный скрипт RDP-Ban, если был
-& schtasks.exe /Delete /TN 'RDP-Ban' /F 2>$null | Out-Null
+[void](Invoke-Native 'schtasks.exe' @('/Delete', '/TN', 'RDP-Ban', '/F'))
 Get-NetFirewallRule -DisplayName 'RDP-Ban' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
 
 # 5. аудит неудачных входов (событие 4625)
-& auditpol.exe /set /subcategory:'{0CCE9215-69AE-11D9-BED3-505054503030}' /failure:enable | Out-Null
+[void](Invoke-Native 'auditpol.exe' @('/set', '/subcategory:{0CCE9215-69AE-11D9-BED3-505054503030}', '/failure:enable'))
 Say '   аудит неудачных входов включён'
 
 # 6. локальная сеть — разрешить всё
@@ -84,9 +90,10 @@ if ($off.Count) { Say "   ВНИМАНИЕ: брандмауэр выключе�
 
 # 7. задание в Планировщике: агент каждую минуту от SYSTEM
 $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$tr = "`"$ps`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\agent.ps1`""
-& schtasks.exe /Create /TN 'IPShield-Agent' /SC MINUTE /MO 1 /RU SYSTEM /RL HIGHEST /TR $tr /F | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Не удалось создать задание IPShield-Agent в Планировщике' }
+# пути без пробелов, поэтому кавычки внутри /TR не нужны (PowerShell 5.1 их портит)
+$tr = "$ps -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $root\agent.ps1"
+$r = Invoke-Native 'schtasks.exe' @('/Create', '/TN', 'IPShield-Agent', '/SC', 'MINUTE', '/MO', '1', '/RU', 'SYSTEM', '/RL', 'HIGHEST', '/TR', $tr, '/F')
+if ($r.code -ne 0) { throw "Не удалось создать задание IPShield-Agent в Планировщике: $($r.out)" }
 Say '   задание IPShield-Agent создано (каждую минуту)'
 
 # 8. ярлык на общем рабочем столе, запуск от администратора
@@ -103,7 +110,8 @@ Say "   ярлык: $lnk"
 
 # 9. первый запуск агента (читает журналы за последние дни — может занять минуту)
 Say '   первый запуск агента...'
-& $ps -NoProfile -ExecutionPolicy Bypass -File "$root\agent.ps1" -Force
+$r = Invoke-Native $ps @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$root\agent.ps1", '-Force')
+if ($r.out.Trim()) { Say $r.out.Trim() Yellow }
 $v = Read-JsonFile (Join-Path $root 'view.json') $null
 if ($v) {
     Say ("== Готово. Атакующих IP: {0}, заблокировано: {1}." -f @($v.rows).Count, $v.bannedCount) Green
