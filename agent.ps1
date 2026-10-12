@@ -242,6 +242,8 @@ foreach ($ip in @($Att.Keys)) {
     if ($unban[$ip] -and [string]$unban[$ip] -gt $from) { $from = [string]$unban[$ip] }
     $recent = @(@($a.r) | Where-Object { $_ -gt $from }).Count
     $a.b = ($recent -ge $threshold)
+    $a.n = $recent
+    if ($a.b) { if (-not $a.bt) { $a.bt = $nowS } } else { $a.bt = $null }
 }
 
 # 4. отправляем свой файл в общий репозиторий
@@ -255,7 +257,12 @@ try { $fwOn = -not @(Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).
 $pubA = @{}
 foreach ($ip in $Att.Keys) {
     $a = $Att[$ip]
-    $pubA[$ip] = @{ c = $a.c; f = $a.f; l = $a.l; s = $a.s; u = @($a.u); cc = $a.cc; co = $a.co; b = [bool]$a.b }
+    $why = $null
+    if ($a.b) {
+        $svcText = (@($a.s.Keys | Sort-Object { -[int]$a.s[$_] } | ForEach-Object { "$_ x$($a.s[$_])" }) -join ', ')
+        $why = "Подбор пароля: $($a.n) неудачных попыток за $([int]$cfg.windowDays) дн. (порог $threshold). Службы: $svcText. Последняя попытка: $($a.l)"
+    }
+    $pubA[$ip] = @{ c = $a.c; f = $a.f; l = $a.l; s = $a.s; u = @($a.u); cc = $a.cc; co = $a.co; b = [bool]$a.b; n = $a.n; bt = $a.bt; why = $why }
 }
 $hostDoc = @{ host = $me; lan = $lanIp; version = $IPS_Version; firewall = $fwOn; attackers = $pubA; trusted = $trusted }
 $hash = [BitConverter]::ToString((New-Object Security.Cryptography.SHA1Managed).ComputeHash([Text.Encoding]::UTF8.GetBytes((ConvertTo-JsonText $hostDoc))))
@@ -304,6 +311,8 @@ foreach ($path in $docs.Keys) {
         foreach ($u in @($a.u)) { if ($u -and -not (@($r.u) -contains $u) -and @($r.u).Count -lt 15) { $r.u = @($r.u) + $u } }
         $r.hosts = @($r.hosts) + $h
         if (-not $r.cc -and $a.cc) { $r.cc = $a.cc; $r.co = $a.co }
+        if ($a.why -and -not $r.why) { $r.why = [string]$a.why }
+        if ($a.bt -and (-not $r.bt -or [string]$a.bt -lt $r.bt)) { $r.bt = [string]$a.bt }
         $ub = [string]$unban[$ip]
         if ($a.b -and (-not $ub -or [string]$a.l -gt $ub)) { $r.banned = $true }
     }

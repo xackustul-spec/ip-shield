@@ -76,7 +76,7 @@ function New-Btn([string]$Text, [int]$Width = 150) {
 $tabA = New-Object System.Windows.Forms.TabPage; $tabA.Text = 'Атаки'
 $tblA = New-Object System.Data.DataTable
 foreach ($c in @(@('IP', [string]), @('Страна', [string]), @('Службы (порт)', [string]), @('Попыток', [int]),
-                 @('Первая', [datetime]), @('Последняя', [datetime]), @('Компьютеры', [string]), @('Логины', [string]), @('Статус', [string]))) {
+                 @('Первая', [datetime]), @('Последняя', [datetime]), @('Компьютеры', [string]), @('Логины', [string]), @('Статус', [string]), @('Причина', [string]))) {
     [void]$tblA.Columns.Add($c[0], $c[1])
 }
 $gridA = New-Grid
@@ -125,7 +125,7 @@ $script:view = $null
 function Update-Filter {
     $t = $filter.Text.Replace("'", "''").Replace('[', '[[]').Replace('%', '[%]').Replace('*', '[*]')
     $parts = @()
-    if ($t) { $parts += "(IP LIKE '%$t%' OR [Страна] LIKE '%$t%' OR [Службы (порт)] LIKE '%$t%' OR [Компьютеры] LIKE '%$t%' OR [Логины] LIKE '%$t%' OR [Статус] LIKE '%$t%')" }
+    if ($t) { $parts += "(IP LIKE '%$t%' OR [Страна] LIKE '%$t%' OR [Службы (порт)] LIKE '%$t%' OR [Компьютеры] LIKE '%$t%' OR [Логины] LIKE '%$t%' OR [Статус] LIKE '%$t%' OR [Причина] LIKE '%$t%')" }
     if ($onlyBanned.Checked) { $parts += "[Статус] = 'Забанен'" }
     $tblA.DefaultView.RowFilter = ($parts -join ' AND ')
 }
@@ -144,7 +144,7 @@ function Import-View {
         $country = if ($r.co) { "$($r.co) ($($r.cc))" } else { '' }
         $first = if ($r.f) { (ConvertFrom-Stamp $r.f).ToLocalTime() } else { [DBNull]::Value }
         $last = if ($r.l) { (ConvertFrom-Stamp $r.l).ToLocalTime() } else { [DBNull]::Value }
-        [void]$tblA.Rows.Add($r.ip, $country, $svc, [int]$r.c, $first, $last, $hosts, ((@($r.u)) -join ', '), $r.status)
+        [void]$tblA.Rows.Add($r.ip, $country, $svc, [int]$r.c, $first, $last, $hosts, ((@($r.u)) -join ', '), $r.status, [string]$r.why)
     }
     $tblA.EndLoadData()
     if (-not $gridA.SortedColumn) { $tblA.DefaultView.Sort = '[Последняя] DESC' }
@@ -188,6 +188,7 @@ $gridA.add_DataBindingComplete({
     if ($gridA.Columns['Службы (порт)']) { $gridA.Columns['Службы (порт)'].FillWeight = 160 }
     if ($gridA.Columns['Логины']) { $gridA.Columns['Логины'].FillWeight = 140 }
     if ($gridA.Columns['Статус']) { $gridA.Columns['Статус'].FillWeight = 130 }
+    if ($gridA.Columns['Причина']) { $gridA.Columns['Причина'].FillWeight = 260 }
 })
 
 function Get-SelectedIPs { return @($gridA.SelectedRows | ForEach-Object { [string]$_.Cells['IP'].Value } | Where-Object { $_ }) }
@@ -205,7 +206,7 @@ function Export-Banned {
         $svc = (@($r.s.Keys | Sort-Object { -[int]$r.s[$_] } | ForEach-Object { "$_ ($($r.s[$_]))" }) -join ', ')
         $country = if ($r.co) { "$($r.co) ($($r.cc))" } else { '' }
         [void]$sb.Append("<tr><td>$(& $enc $r.ip)</td><td>$(& $enc $country)</td><td>$(& $enc $svc)</td><td class=n>$([int]$r.c)</td>" +
-            "<td>$(Format-Local $r.f)</td><td>$(Format-Local $r.l)</td><td>$(& $enc ((@($r.hosts) | Sort-Object -Unique) -join ', '))</td><td>$(& $enc ((@($r.u)) -join ', '))</td></tr>`n")
+            "<td>$(Format-Local $r.f)</td><td>$(Format-Local $r.l)</td><td>$(& $enc ((@($r.hosts) | Sort-Object -Unique) -join ', '))</td><td>$(& $enc ((@($r.u)) -join ', '))</td><td>$(& $enc $r.why)</td></tr>`n")
     }
     $when = (Get-Date).ToString('dd.MM.yyyy HH:mm')
     $html = @"
@@ -219,7 +220,7 @@ input{padding:6px 8px;width:280px;margin-bottom:10px}
 <h1>IP Shield — заблокированные IP</h1>
 <div class="m">Компьютер: $(& $enc $v.host) · выгружено $when · всего: $($rows.Count) · правило: $($v.threshold) неудачных попыток за $($v.windowDays) дн.</div>
 <input id="q" placeholder="Поиск..." oninput="f()">
-<table id="t"><thead><tr><th>IP</th><th>Страна</th><th>Службы (порт)</th><th>Попыток</th><th>Первая</th><th>Последняя</th><th>Компьютеры</th><th>Логины</th></tr></thead><tbody>
+<table id="t"><thead><tr><th>IP</th><th>Страна</th><th>Службы (порт)</th><th>Попыток</th><th>Первая</th><th>Последняя</th><th>Компьютеры</th><th>Логины</th><th>Причина бана</th></tr></thead><tbody>
 $($sb.ToString())</tbody></table>
 <script>
 function f(){var q=document.getElementById('q').value.toLowerCase();document.querySelectorAll('#t tbody tr').forEach(function(r){r.style.display=r.innerText.toLowerCase().indexOf(q)>=0?'':'none'})}
